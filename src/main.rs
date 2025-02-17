@@ -116,6 +116,12 @@ impl State {
                         // TODO: w/b in ascii mode
                         // TODO: / in ascii mode
                         // TODO: : to goto an index
+                        //           - should goto the exact byte
+                        //           - should allow either hex or decimal
+                        //           - should also be for command mode in the future
+                        // TODO: i for insert mode
+                        // TODO: r for replace char
+                        // TODO: R for replace mode
                         _ => {}
                     }
                 }
