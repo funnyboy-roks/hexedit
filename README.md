@@ -2,6 +2,8 @@
 
 TUI hex editor with similar binds to vi.
 
+![Screenshot of program](./img/screenshot.png)
+
 ## Usage
 
 ```sh
