@@ -1,10 +1,10 @@
 use anyhow::Context;
 use ratatui::{
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
-    layout::{Alignment, Constraint, Layout},
-    style::{Color, Style, Stylize},
+    layout::{Constraint, Layout},
+    style::{Color, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders},
+    widgets::Block,
     DefaultTerminal, Frame,
 };
 
@@ -15,6 +15,22 @@ pub fn main() -> anyhow::Result<()> {
     let app_result = State::new(file).run(terminal);
     ratatui::restore();
     app_result
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Mode {
+    Normal,
+    Insert,
+    Replace,
+}
+
+impl Mode {
+    fn allow_motion(self) -> bool {
+        match self {
+            Mode::Normal => true,
+            Mode::Insert | Mode::Replace => false,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -38,6 +54,20 @@ impl Position {
         }
     }
 
+    fn is_hex(self) -> bool {
+        match self {
+            Position::Hex(_) => true,
+            Position::Ascii(_) => false,
+        }
+    }
+
+    fn is_ascii(self) -> bool {
+        match self {
+            Position::Hex(_) => false,
+            Position::Ascii(_) => true,
+        }
+    }
+
     fn inner(self) -> usize {
         match self {
             Position::Hex(n) => n,
@@ -58,16 +88,18 @@ impl Position {
 }
 
 struct State {
-    editing: bool,
+    mode: Mode,
     position: Position,
+    top: bool,
     file: Vec<u8>,
 }
 
 impl State {
     fn new(file: Vec<u8>) -> Self {
         Self {
-            editing: false,
+            mode: Mode::Normal,
             position: Position::Hex(0),
+            top: true,
             file,
         }
     }
@@ -82,35 +114,80 @@ impl State {
                     }
 
                     match key.code {
-                        KeyCode::Char('q') if !self.editing => {
-                            return Ok(());
+                        KeyCode::Esc => {
+                            self.mode = Mode::Normal;
                         }
-                        KeyCode::Char('l') if !self.editing => {
+                        KeyCode::Char('i') if self.mode == Mode::Normal => {
+                            self.mode = Mode::Insert;
+                        }
+                        KeyCode::Char(c @ 'a'..='f' | c @ '0'..='9')
+                            if self.mode == Mode::Insert && self.position.is_hex() =>
+                        {
+                            let x = self.position.inner();
+                            let val = if c >= 'a' {
+                                c as u8 - b'a' + 10
+                            } else {
+                                c as u8 - b'0'
+                            };
+                            if self.top {
+                                self.file.insert(x, val << 4);
+                                self.top ^= true;
+                            } else {
+                                self.file[x] |= val;
+                                self.top = true;
+                                self.position.add_assign(1, self.file.len() - 1);
+                            }
+                        }
+                        KeyCode::Backspace
+                            if self.mode == Mode::Insert && self.position.is_ascii() =>
+                        {
+                            let x = self.position.inner();
+                            if x > 0 {
+                                self.file.remove(x - 1);
+                                self.position.add_assign(-1, self.file.len() - 1);
+                            }
+                        }
+                        KeyCode::Enter if self.mode == Mode::Insert && self.position.is_ascii() => {
+                            let x = self.position.inner();
+                            self.file.insert(x, b'\n');
                             self.position.add_assign(1, self.file.len() - 1);
                         }
-                        KeyCode::Char('h') if !self.editing => {
+                        KeyCode::Char(c)
+                            if self.mode == Mode::Insert && self.position.is_ascii() =>
+                        {
+                            let x = self.position.inner();
+                            self.file.insert(x, c as u8);
+                            self.position.add_assign(1, self.file.len() - 1);
+                        }
+                        KeyCode::Char('q') if self.mode == Mode::Normal => {
+                            return Ok(());
+                        }
+                        KeyCode::Char('l') if self.mode.allow_motion() => {
+                            self.position.add_assign(1, self.file.len() - 1);
+                        }
+                        KeyCode::Char('h') if self.mode.allow_motion() => {
                             self.position.add_assign(-1, self.file.len() - 1);
                         }
-                        KeyCode::Char('j') if !self.editing => {
+                        KeyCode::Char('j') if self.mode.allow_motion() => {
                             if self.position.inner() < self.file.len() - 16 {
                                 self.position.add_assign(16, self.file.len() - 1);
                             }
                         }
-                        KeyCode::Char('k') if !self.editing => {
+                        KeyCode::Char('k') if self.mode.allow_motion() => {
                             if self.position.inner() >= 16 {
                                 self.position.add_assign(-16, self.file.len() - 1);
                             }
                         }
-                        KeyCode::Char('x') if !self.editing => {
+                        KeyCode::Char('x') if self.mode == Mode::Normal => {
                             let n = self.position.inner();
                             self.file.remove(n);
                             self.position.max(self.file.len() - 1);
                         }
                         // TODO: I'm not sure I like H/L for this.
-                        KeyCode::Char('H') if !self.editing => {
+                        KeyCode::Char('H') if self.mode.allow_motion() => {
                             self.position.switch();
                         }
-                        KeyCode::Char('L') if !self.editing => {
+                        KeyCode::Char('L') if self.mode.allow_motion() => {
                             self.position.switch();
                         }
                         // TODO: w/b in ascii mode
